@@ -859,7 +859,9 @@ class TransformersWrapper:
         logs_save_dir: str = "logs",
         logs_name_exp: str = "finetune_masked",
         checkpoint: Optional[str] = None,
-        save_last_checkpoint: bool = True,
+        save_checkpoints: bool = True,
+        save_checkpoints_strategy: Optional[dict] = None,
+        check_val_every_n_epoch: int = 1,
     ):
         """Function to finetune a model on a specific dataset
 
@@ -903,9 +905,8 @@ class TransformersWrapper:
             logs_save_dir : Defaults directory to logs.
             logs_name_exp: Name of the experience in the logs.
             checkpoint : Path to a checkpoint file to restore training session.
-            save_last_checkpoint: Save last checkpoint and 2 best trainings models
-                                  to restore training session. Take a large amout of time
-                                  and memory.
+            save_checkpoints: Save checkpoints.
+            save_checkpoints_strategy: Checkpoint saving frequency (arguments to ModelCheckpoint). Optional, defaults to last and top 2.
         """
         if isinstance(train_sequences, str):
             train_sequences = load_fasta(train_sequences)
@@ -954,16 +955,17 @@ class TransformersWrapper:
         logger = CSVLogger(logs_save_dir, name=logs_name_exp)
         checkpoint_callback = None
 
-        if save_last_checkpoint:
-            checkpoint_callback = [
-                ModelCheckpoint(
+        if save_checkpoints:
+            if save_checkpoints_strategy is None:
+                # Defaults
+                save_checkpoints_strategy = dict(
                     save_last=True,
                     save_top_k=2,
                     mode="max",
                     monitor="val_acc",
                     every_n_val_epochs=3,
                 )
-            ]
+            checkpoint_callback = ModelCheckpoint(**save_checkpoints_strategy)
 
         trainer = Trainer(
             gpus=self._num_gpus,
@@ -975,7 +977,8 @@ class TransformersWrapper:
             accelerator=accelerator,
             replace_sampler_ddp=False,
             resume_from_checkpoint=checkpoint,
-            callbacks=checkpoint_callback,
+            callbacks=[checkpoint_callback] if checkpoint_callback is not None else None,
+            check_val_every_n_epoch=check_val_every_n_epoch,
         )
 
         # Launch training
@@ -984,3 +987,6 @@ class TransformersWrapper:
         # Load new model
         self._language_model.set_model(lightning_model.model)
         log.info("Training completed.")
+
+        if checkpoint_callback is not None:
+            return checkpoint_callback.best_model_path
