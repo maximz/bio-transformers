@@ -963,7 +963,7 @@ class TransformersWrapper:
                     save_top_k=2,
                     mode="max",
                     monitor="val_acc",
-                    every_n_val_epochs=3,
+                    every_n_epochs=3,
                 )
             checkpoint_callback = ModelCheckpoint(**save_checkpoints_strategy)
 
