@@ -85,7 +85,7 @@ class LightningModule(pl.LightningModule):
         self.log_dict(
             {"train_loss": loss, "train_acc": self.train_acc},
             on_step=True,
-            on_epoch=True,
+            on_epoch=False, # TODO: revert to True
             prog_bar=True,
             logger=True,
         )
@@ -112,7 +112,7 @@ class LightningModule(pl.LightningModule):
 
         self.log_dict(
             {"val_loss": loss, "val_acc": self.val_acc},
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
