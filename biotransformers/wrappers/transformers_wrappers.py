@@ -21,7 +21,7 @@ from biotransformers.utils.utils import init_model_sequences, load_fasta
 from biotransformers.wrappers.language_model import LanguageModel
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 
 from ..lightning_utils.data import BatchWithConstantNumberTokensDataModule
 from ..lightning_utils.models import LightningModule
@@ -856,12 +856,13 @@ class TransformersWrapper:
         accelerator: str = "ddp",
         amp_level: str = "O2",
         precision: int = 16,
-        logs_save_dir: str = "logs",
+        logs_save_dir: Union[str, Path] = "logs",
         logs_name_exp: str = "finetune_masked",
         checkpoint: Optional[str] = None,
         checkpoint_callbacks: Optional[list] = None,
         check_val_every_n_epoch: int = 1,
         val_check_interval: float = 1.0,
+        log_every_n_steps: int = 50,
     ):
         """Function to finetune a model on a specific dataset
 
@@ -907,6 +908,7 @@ class TransformersWrapper:
             checkpoint : Path to a checkpoint file to restore training session.
             checkpoint_callbacks: optional list of ModelCheckpoint callbacks to save checkpoints. Defaults to None: will use a default ModelCheckpoint that saves the last model and the top 2 models by val_acc. Pass empty list to disable checkpointing.
             val_check_interval: How often to check the validation set within each epoch. Default 1.0 means check after 100% of the epoch. Setting to 0.25 would mean checking 4 times per epoch.
+            log_every_n_steps: Logging frequency (default is to log every 50 training steps)
         """
         if isinstance(train_sequences, str):
             train_sequences = load_fasta(train_sequences)
@@ -952,7 +954,15 @@ class TransformersWrapper:
         if self._num_gpus == 0:
             raise ValueError("You try to train a transformers without GPU.")
 
-        logger = CSVLogger(logs_save_dir, name=logs_name_exp)
+        csv_logger = CSVLogger(
+            save_dir=logs_save_dir,
+            name=logs_name_exp,
+            flush_logs_every_n_steps=50,
+        )
+        tensorboard_logger = TensorBoardLogger(
+            save_dir=logs_save_dir,
+            name="lightning_logs",
+        )
 
         if checkpoint_callbacks is None:
             # enable default callback
@@ -972,13 +982,14 @@ class TransformersWrapper:
             precision=precision,
             accumulate_grad_batches=acc_batch_size,
             max_epochs=epochs,
-            logger=logger,
+            logger=[csv_logger, tensorboard_logger],
             accelerator=accelerator,
             replace_sampler_ddp=False,
             resume_from_checkpoint=checkpoint,
             callbacks=checkpoint_callbacks,
             check_val_every_n_epoch=check_val_every_n_epoch,
             val_check_interval=val_check_interval,
+            log_every_n_steps=log_every_n_steps,
         )
 
         # Launch training
