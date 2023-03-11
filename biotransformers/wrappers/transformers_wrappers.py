@@ -983,7 +983,7 @@ class TransformersWrapper:
             accumulate_grad_batches=acc_batch_size,
             max_epochs=epochs,
             logger=[csv_logger, tensorboard_logger],
-            accelerator=accelerator,
+            strategy=accelerator,
             replace_sampler_ddp=False,
             resume_from_checkpoint=checkpoint,
             callbacks=checkpoint_callbacks,
