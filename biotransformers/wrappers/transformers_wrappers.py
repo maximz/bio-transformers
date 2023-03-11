@@ -859,9 +859,9 @@ class TransformersWrapper:
         logs_save_dir: str = "logs",
         logs_name_exp: str = "finetune_masked",
         checkpoint: Optional[str] = None,
-        save_checkpoints: bool = True,
-        save_checkpoints_strategy: Optional[dict] = None,
+        checkpoint_callbacks: Optional[list] = None,
         check_val_every_n_epoch: int = 1,
+        val_check_interval: float = 1.0,
     ):
         """Function to finetune a model on a specific dataset
 
@@ -905,8 +905,8 @@ class TransformersWrapper:
             logs_save_dir : Defaults directory to logs.
             logs_name_exp: Name of the experience in the logs.
             checkpoint : Path to a checkpoint file to restore training session.
-            save_checkpoints: Save checkpoints.
-            save_checkpoints_strategy: Checkpoint saving frequency (arguments to ModelCheckpoint). Optional, defaults to last and top 2.
+            checkpoint_callbacks: optional list of ModelCheckpoint callbacks to save checkpoints. Defaults to None: will use a default ModelCheckpoint that saves the last model and the top 2 models by val_acc. Pass empty list to disable checkpointing.
+            val_check_interval: How often to check the validation set within each epoch. Default 1.0 means check after 100% of the epoch. Setting to 0.25 would mean checking 4 times per epoch.
         """
         if isinstance(train_sequences, str):
             train_sequences = load_fasta(train_sequences)
@@ -953,19 +953,18 @@ class TransformersWrapper:
             raise ValueError("You try to train a transformers without GPU.")
 
         logger = CSVLogger(logs_save_dir, name=logs_name_exp)
-        checkpoint_callback = None
 
-        if save_checkpoints:
-            if save_checkpoints_strategy is None:
-                # Defaults
-                save_checkpoints_strategy = dict(
+        if checkpoint_callbacks is None:
+            # enable default callback
+            checkpoint_callbacks = [
+                ModelCheckpoint(
                     save_last=True,
                     save_top_k=2,
                     mode="max",
                     monitor="val_acc",
-                    every_n_epochs=3,
+                    every_n_epochs=check_val_every_n_epoch,
                 )
-            checkpoint_callback = ModelCheckpoint(**save_checkpoints_strategy)
+            ]
 
         trainer = Trainer(
             gpus=self._num_gpus,
@@ -977,8 +976,9 @@ class TransformersWrapper:
             accelerator=accelerator,
             replace_sampler_ddp=False,
             resume_from_checkpoint=checkpoint,
-            callbacks=[checkpoint_callback] if checkpoint_callback is not None else None,
+            callbacks=checkpoint_callbacks,
             check_val_every_n_epoch=check_val_every_n_epoch,
+            val_check_interval=val_check_interval,
         )
 
         # Launch training
@@ -988,5 +988,5 @@ class TransformersWrapper:
         self._language_model.set_model(lightning_model.model)
         log.info("Training completed.")
 
-        if checkpoint_callback is not None:
-            return checkpoint_callback.best_model_path
+        if checkpoint_callbacks is not None:
+            return [callback.best_model_path for callback in checkpoint_callbacks]
