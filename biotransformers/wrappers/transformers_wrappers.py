@@ -861,7 +861,7 @@ class TransformersWrapper:
         checkpoint: Optional[str] = None,
         checkpoint_callbacks: Optional[list] = None,
         check_val_every_n_epoch: int = 1,
-        val_check_interval: float = 1.0,
+        val_check_interval: Union[int, float] = 1.0,
         log_every_n_steps: int = 50,
     ):
         """Function to finetune a model on a specific dataset
@@ -907,7 +907,7 @@ class TransformersWrapper:
             logs_name_exp: Name of the experience in the logs.
             checkpoint : Path to a checkpoint file to restore training session.
             checkpoint_callbacks: optional list of ModelCheckpoint callbacks to save checkpoints. Defaults to None: will use a default ModelCheckpoint that saves the last model and the top 2 models by val_acc. Pass empty list to disable checkpointing.
-            val_check_interval: How often to check the validation set within each epoch. Default 1.0 means check after 100% of the epoch. Setting to 0.25 would mean checking 4 times per epoch.
+            val_check_interval: How often to check the validation set within each epoch. Default 1.0 means check after 100% of the epoch. Setting to 0.25 would mean checking 4 times per epoch. Setting to an int like 100 would mean checking every 100 training steps.
             log_every_n_steps: Logging frequency (default is to log every 50 training steps)
         """
         if isinstance(train_sequences, str):
