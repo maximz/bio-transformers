@@ -933,6 +933,7 @@ class TransformersWrapper:
         lightning_model = LightningModule(
             model=fit_model,
             alphabet=alphabet,
+            vocab_size=self._language_model.vocab_size,
             lr=lr,
             warmup_updates=warmup_updates,
             warmup_init_lr=warmup_init_lr,
@@ -998,6 +999,3 @@ class TransformersWrapper:
         # Load new model
         self._language_model.set_model(lightning_model.model)
         log.info("Training completed.")
-
-        if checkpoint_callbacks is not None:
-            return [callback.best_model_path for callback in checkpoint_callbacks]

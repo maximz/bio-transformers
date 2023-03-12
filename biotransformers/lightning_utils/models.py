@@ -15,6 +15,7 @@ class LightningModule(pl.LightningModule):
         self,
         model,
         alphabet,
+        vocab_size: int,
         lr: float,
         warmup_end_lr: float,
         warmup_updates: int = 10,
@@ -23,14 +24,15 @@ class LightningModule(pl.LightningModule):
         super().__init__()
         self.model = model
         self.alphabet = alphabet
+        self.vocab_size = vocab_size
         self.lr = lr
         self.automatic_optimization = True
         self.warmup_updates = warmup_updates
         self.warmup_init_lr = min(warmup_init_lr, lr)
         self.lr_step = (warmup_end_lr - self.warmup_init_lr) / warmup_updates
         self.decay_factor = warmup_end_lr * warmup_updates ** 0.5
-        self.train_acc = torchmetrics.Accuracy()
-        self.val_acc = torchmetrics.Accuracy()
+        self.train_acc = torchmetrics.Accuracy(task='multiclass', num_classes=vocab_size)
+        self.val_acc = torchmetrics.Accuracy(task='multiclass', num_classes=vocab_size)
 
     def forward(self, x):
         return self.model(x)["logits"]
