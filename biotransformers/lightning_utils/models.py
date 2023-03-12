@@ -84,8 +84,8 @@ class LightningModule(pl.LightningModule):
 
         self.log_dict(
             {"train_loss": loss, "train_acc": self.train_acc},
-            on_step=False,
-            on_epoch=True,
+            on_step=True,
+            on_epoch=False,
             prog_bar=True,
             logger=True,
         )
