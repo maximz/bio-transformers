@@ -825,6 +825,7 @@ class TransformersWrapper:
             checkpoint_path=checkpoint_path,
             model=self._language_model.model,
             alphabet=self._language_model.get_alphabet_dataloader(),
+            vocab_size=self._language_model.vocab_size,
             lr=1e-5,
             warmup_updates=100,
             warmup_init_lr=1e-7,
