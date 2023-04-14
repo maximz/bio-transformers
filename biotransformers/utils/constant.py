@@ -8,6 +8,12 @@ ESM_LIST = [
     "esm_msa1_t12_100M_UR50S",
     "esm_msa1b_t12_100M_UR50S",
     "esm1v_t33_650M_UR90S_1",
+    "esm2_t6_8M_UR50D",
+    "esm2_t12_35M_UR50D",
+    "esm2_t30_150M_UR50D",
+    "esm2_t33_650M_UR50D",
+    "esm2_t36_3B_UR50D",
+    "esm2_t48_15B_UR50D",
 ]
 
 ROSTLAB_LIST = ["Rostlab/prot_bert", "Rostlab/prot_bert_bfd"]

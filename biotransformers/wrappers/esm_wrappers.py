@@ -36,7 +36,12 @@ class ESMWrapper(LanguageModel):
         self.num_layers = self._model.num_layers
         repr_layers = -1
         self.repr_layers = (repr_layers + self.num_layers + 1) % (self.num_layers + 1)
-        self.hidden_size = self._model.args.embed_dim
+        if hasattr(self._model, "args"):
+            # ESM1
+            self.hidden_size = self._model.args.embed_dim
+        else:
+            # ESM2
+            self.hidden_size = self._model.embed_dim
         self._model = self._model.to(self._device)
         self.batch_converter = self.alphabet.get_batch_converter()
         self.is_msa = "msa" in model_dir
