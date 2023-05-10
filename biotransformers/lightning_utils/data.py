@@ -127,17 +127,17 @@ def mask_seq(
 
 
 def collate_fn(
-    samples: Sequence[Tuple[str, str]],
+    samples: List[List[Tuple[str, float]]],
     tokenizer: BatchConverter,
     alphabet: AlphabetDataLoader,
     masking_ratio: float,
     masking_prob: float,
     random_token_prob: float,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Collate function to mask tokens.
 
     Args:
-        samples: a sequences of (label, seq).
+        samples: a sequences of (label, seq, weight).
         tokenizer: facebook tokenizer, that accepts sequences of (label, seq_str)
             and outputs (labels, seq_strs, tokens).
         alphabet: facebook alphabet.
@@ -151,10 +151,18 @@ def collate_fn(
         mask_indices: indices of masked tokens
     """
     random_token_indices = [alphabet.tok_to_idx(aa) for aa in alphabet.standard_toks]
-    seqs, tokens = tokenizer(
-        samples[0]
-    )  # take samples[0] because batch_sampler return list of list
-    tokens_list, targets_list = [], []
+
+    # Unpack
+    samples = samples[0] # batch_sampler gives a list of list of tuples
+    # TODO: is it going to be a Tuple[List[List[str]], List[np.ndarray]]?
+    sequences = [sample[0] for sample in samples] # get the sequences
+    weights = [sample[1] for sample in samples] # get the weights per sequence position
+
+    # Run tokenizer
+    seqs, tokens = tokenizer(sequences)
+
+    # Construct lists of tokens, targets, and weights
+    tokens_list, targets_list, weights_list = [], [], []
     for i, seq in enumerate(seqs):
         tokens_i, targets_i = mask_seq(
             seq=seq,
@@ -170,10 +178,19 @@ def collate_fn(
         tokens_list.append(tokens_i)
         targets_list.append(targets_i)
 
+        weights_for_this_sequence = torch.tensor(weights[i])
+        # Add ones at start/end based on alphabet.prepend_bos and alphabet.append_eos
+        if alphabet.prepend_bos:
+            weights_for_this_sequence = torch.cat((torch.ones(1), weights_for_this_sequence))
+        if alphabet.append_eos:
+            weights_for_this_sequence = torch.cat((weights_for_this_sequence, torch.ones(1)))
+        weights_list.append(weights_for_this_sequence)
+
     tokens = torch.stack(tokens_list)
     targets = torch.stack(targets_list)
+    weights = torch.stack(weights_list)
 
-    return tokens, targets
+    return tokens, targets, weights
 
 
 def crop_sequence(sequence: str, crop_length: int) -> str:
@@ -404,27 +421,35 @@ class BatchWithConstantNumberTokensDataset(Dataset):
     Dataset class to work in pair with the BatchWithConstantNumberTokensSampler.
     """
 
-    def __init__(self, sequences: List[str]):
+    def __init__(self, sequences: List[str], weights: List[np.ndarray]):
         super().__init__()
         self.sequences = sequences
+        self.weights = weights
+        if len(self.sequences) != len(self.weights):
+            raise ValueError(
+                f"Sequences and weights must have the same length. Got {len(self.sequences)} sequences and {len(self.weights)} weights."
+            )
 
     def __len__(self):
         return len(self.sequences)
 
-    def __getitem__(self, sampler_out) -> List[str]:
+    def __getitem__(self, sampler_out) -> Tuple[List[str], List[np.ndarray]]:
+        # Get a single item.
         indices, lengths = zip(*sampler_out)
         sequences = [
             crop_sequence(self.sequences[i], length)
             for i, length in zip(indices, lengths)
         ]
-        return sequences
+        return sequences, [self.weights[i] for i in indices]
 
 
 class BatchWithConstantNumberTokensDataModule(LightningDataModule):
     def __init__(
         self,
         train_sequences: List[str],
+        train_sequence_position_weights: List[np.ndarray],
         validation_sequences: List[str],
+        validation_sequence_position_weights: List[np.ndarray],
         alphabet: AlphabetDataLoader,
         masking_ratio: float,
         masking_prob: float,
@@ -435,7 +460,9 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
     ):
         LightningDataModule.__init__(self)
         self._train_sequences = train_sequences
+        self._train_sequence_position_weights = train_sequence_position_weights
         self._validation_sequences = validation_sequences
+        self._validation_sequence_position_weights = validation_sequence_position_weights
         self._alphabet = alphabet
         self._masking_ratio = masking_ratio
         self._masking_prob = masking_prob
@@ -444,8 +471,8 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
         self._toks_per_batch = toks_per_batch
         self._crop_sizes = crop_sizes
 
-    def _get_dataloader(self, sequences: List[str]) -> DataLoader:
-        dataset = BatchWithConstantNumberTokensDataset(sequences)
+    def _get_dataloader(self, sequences: List[str], weights: List[np.ndarray]) -> DataLoader:
+        dataset = BatchWithConstantNumberTokensDataset(sequences, weights)
         batch_sampler = DistributedBatchWithConstantNumberTokensSampler(
             sequence_strs=sequences,
             toks_per_batch=self._toks_per_batch,
@@ -471,7 +498,7 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
         return loader
 
     def train_dataloader(self):
-        return self._get_dataloader(self._train_sequences)
+        return self._get_dataloader(self._train_sequences, self._train_sequence_position_weights)
 
     def val_dataloader(self):
-        return self._get_dataloader(self._validation_sequences)
+        return self._get_dataloader(self._validation_sequences, self._validation_sequence_position_weights)

@@ -842,7 +842,9 @@ class TransformersWrapper:
     def finetune(
         self,
         train_sequences: Union[List[str], str],
+        train_sequence_position_weights: List[np.ndarray],
         validation_sequences: Union[List[str], str],
+        validation_sequence_position_weights: List[np.ndarray],
         num_data_workers: int = 4,
         lr: float = 1.0e-5,
         warmup_updates: int = 1024,
@@ -943,7 +945,9 @@ class TransformersWrapper:
 
         lightning_data_module = BatchWithConstantNumberTokensDataModule(
             train_sequences=train_sequences,
+            train_sequence_position_weights=train_sequence_position_weights,
             validation_sequences=validation_sequences,
+            validation_sequence_position_weights=validation_sequence_position_weights,
             alphabet=alphabet,
             masking_ratio=masking_ratio,
             masking_prob=masking_prob,

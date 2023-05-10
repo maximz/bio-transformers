@@ -65,6 +65,9 @@ class LightningModule(pl.LightningModule):
         return [optimizer], [lr_scheduler]
 
     def cross_entropy_loss(self, logits, targets):
+        # TODO:
+        # set reduction="none" to get loss for each instance,
+        # then do weighted sum ourselves
         return F.cross_entropy(
             logits.reshape(-1, logits.size(-1)),
             targets.reshape(-1),
