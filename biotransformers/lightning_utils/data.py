@@ -127,7 +127,7 @@ def mask_seq(
 
 
 def collate_fn(
-    samples: List[List[Tuple[str, float]]],
+    samples: List[Tuple[List[str], List[np.ndarray]]],
     tokenizer: BatchConverter,
     alphabet: AlphabetDataLoader,
     masking_ratio: float,
@@ -152,21 +152,21 @@ def collate_fn(
     """
     random_token_indices = [alphabet.tok_to_idx(aa) for aa in alphabet.standard_toks]
 
-    # Unpack
-    samples = samples[0] # batch_sampler gives a list of list of tuples
-    # TODO: is it going to be a Tuple[List[List[str]], List[np.ndarray]]?
-    sequences = [sample[0] for sample in samples] # get the sequences
-    weights = [sample[1] for sample in samples] # get the weights per sequence position
+    # Unpack: batch_sampler output is wrapped in a list (single item)
+    # Here, sequences is a list of strings (one string per entire sequence),
+    # and weights is a list of numpy float arrays (one array per sequence, containing a weight for every character/position in the sequence - but at this point the arrays should be of the same size).
+    sequences, list_of_weights_arrays = samples[0]
 
-    # Run tokenizer
-    seqs, tokens = tokenizer(sequences)
+    # Run tokenizer,
+    # which returns the original sequences and a vector of token IDs for each sequence (vertically concatenated into a 2D tensor).
+    seqs, tokens_matrix = tokenizer(sequences)
 
     # Construct lists of tokens, targets, and weights
     tokens_list, targets_list, weights_list = [], [], []
-    for i, seq in enumerate(seqs):
+    for i, (seq, tokens_vector, weights_vector) in enumerate(zip(seqs, tokens_matrix, list_of_weights_arrays)):
         tokens_i, targets_i = mask_seq(
             seq=seq,
-            tokens=tokens[i, :],
+            tokens=tokens_vector, # same as tokens[i, :]
             prepend_bos=alphabet.prepend_bos,
             mask_idx=alphabet.mask_idx,
             pad_idx=alphabet.padding_idx,
@@ -178,7 +178,7 @@ def collate_fn(
         tokens_list.append(tokens_i)
         targets_list.append(targets_i)
 
-        weights_for_this_sequence = torch.tensor(weights[i])
+        weights_for_this_sequence = torch.tensor(weights_vector) # same as list_of_weights_arrays[i]
         # Add ones at start/end based on alphabet.prepend_bos and alphabet.append_eos
         if alphabet.prepend_bos:
             weights_for_this_sequence = torch.cat((torch.ones(1), weights_for_this_sequence))
@@ -186,6 +186,9 @@ def collate_fn(
             weights_for_this_sequence = torch.cat((weights_for_this_sequence, torch.ones(1)))
         weights_list.append(weights_for_this_sequence)
 
+    # Stack into 2D tensors,
+    # where each row is the vector for a particular sequence,
+    # i.e. the shape is #sequences x #tokens
     tokens = torch.stack(tokens_list)
     targets = torch.stack(targets_list)
     weights = torch.stack(weights_list)

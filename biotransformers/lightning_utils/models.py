@@ -76,10 +76,14 @@ class LightningModule(pl.LightningModule):
         )
 
     def training_step(self, train_batch, batch_idx):
-        tokens, target = train_batch
+        # train_batch is a set of 2D tensors of shape #sequences x #tokens
+        # in each tensor: each row is a sequence; each entry in the row corresponds to a particular token.
+        tokens, target, weights = train_batch
         logits = self.forward(tokens)
+        # TODO: incorporate weights
         loss = self.cross_entropy_loss(logits, target)
 
+        # TODO: incorporate weights
         masked_preds, masked_targets = self.get_tensor_accuracy(logits, target)
         self.train_acc(masked_preds, masked_targets)
 
@@ -104,10 +108,14 @@ class LightningModule(pl.LightningModule):
             batch: batch input.
             batch_idx: index of the batch.
         """
-        tokens, target = val_batch
+        # val_batch is a set of 2D tensors of shape #sequences x #tokens
+        # in each tensor: each row is a sequence; each entry in the row corresponds to a particular token.
+        tokens, target, weights = val_batch
         logits = self.forward(tokens)
+        # TODO: incorporate weights
         loss = self.cross_entropy_loss(logits, target)
 
+        # TODO: incorporate weights
         masked_preds, masked_targets = self.get_tensor_accuracy(logits, target)
         self.val_acc(masked_preds, masked_targets)
 
