@@ -65,17 +65,25 @@ class LightningModule(pl.LightningModule):
         return [optimizer], [lr_scheduler]
 
     def cross_entropy_loss(self, logits: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        # logits are of shape (len_sequences, len_tokens_per_sequence, len_vocab).
+        # flatten to (len_sequences * len_tokens_per_sequence, len_vocab):
+        logits_flatten = logits.reshape(-1, logits.size(-1)),
+
+        # reshape(-1) flattens out the 2D tensor into a 1D tensor
+        targets_flatten = targets.reshape(-1)
+        weights_flatten = weights.reshape(-1)
+
         cross_entropy_per_token = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            # reshape(-1) flattens out the 2D tensor into a 1D tensor
-            targets.reshape(-1),
+            logits_flatten,
+            targets_flatten,
             # set reduction="none" to get loss for each instance,
             # then do weighted sum ourselves
             # reduction="sum",
             reduction="none",
             ignore_index=self.alphabet.padding_idx,
         )
-        return (cross_entropy_per_token * weights.reshape(-1)).sum()
+        # Return weighted sum
+        return (cross_entropy_per_token * weights_flatten).sum()
 
     def training_step(self, train_batch, batch_idx):
         # train_batch is a set of 2D tensors of shape #sequences x #tokens
