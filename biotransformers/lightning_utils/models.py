@@ -75,7 +75,7 @@ class LightningModule(pl.LightningModule):
             reduction="none",
             ignore_index=self.alphabet.padding_idx,
         )
-        return (cross_entropy_per_token * weights).sum()
+        return (cross_entropy_per_token * weights.reshape(-1)).sum()
 
     def training_step(self, train_batch, batch_idx):
         # train_batch is a set of 2D tensors of shape #sequences x #tokens
