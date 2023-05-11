@@ -67,7 +67,7 @@ class LightningModule(pl.LightningModule):
     def cross_entropy_loss(self, logits: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         # logits are of shape (len_sequences, len_tokens_per_sequence, len_vocab).
         # flatten to (len_sequences * len_tokens_per_sequence, len_vocab):
-        logits_flatten = logits.reshape(-1, logits.size(-1)),
+        logits_flatten = logits.reshape(-1, logits.size(-1))
 
         # reshape(-1) flattens out the 2D tensor into a 1D tensor
         targets_flatten = targets.reshape(-1)
@@ -120,7 +120,7 @@ class LightningModule(pl.LightningModule):
         # val_batch is a set of 2D tensors of shape #sequences x #tokens
         # in each tensor: each row is a sequence; each entry in the row corresponds to a particular token.
         tokens, target, weights = val_batch
-        logits = self.forward(tokens)
+        logits = self.forward(tokens) # shape: #sequences x #tokens x len_vocab
         loss = self.cross_entropy_loss(logits, target, weights)
 
         masked_preds, masked_targets = self.get_tensor_accuracy(logits, target)

@@ -156,12 +156,15 @@ def collate_fn(
     # Inside is a tuple for every sequence:
     # First entry: entire string of the sequence;
     # Second entry: numpy float array of weights for every character/position in the sequence.
-    # (At this point the sequences should all be of the equal length and the weight arrays should be of the equal size.)
     list_of_tuples = samples[0]
     sequences, weight_arrays = zip(*list_of_tuples)
 
-    # Vertically stack the weight vectors for all sequences
-    weight_matrix = np.array(weight_arrays)
+    # Vertically stack the weight vectors for all sequences.
+    # Note: sequences are not guaranteed to be of equal length, and thus weight arrays are not necessarily equal size.
+    # When the tokenizer is run below, the tokens_matrix will have right-padding with alphabet.padding_idx.
+    # Do the same here: right-pad with 1s to make all weight arrays equal size.
+    maximum_weight_length = max(arr.shape[0] for arr in weight_arrays)
+    weight_matrix = np.array([np.pad(arr, (0, maximum_weight_length - arr.shape[0]), mode='constant', constant_values=1.) for arr in weight_arrays])
 
     # Add weight=1 at start and/or end,
     # based on alphabet.prepend_bos and alphabet.append_eos,
@@ -445,12 +448,12 @@ class BatchWithConstantNumberTokensDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, sampler_out) -> List[Tuple[str, np.ndarray]]:
-        # Get a single item.
-        indices, lengths = zip(*sampler_out)
+        # Get items.
         # Crop sequences to desired lengths, and apply the edits to the weight arrays too.
+        # sampler_out is a List of tuples of (index, length)
         return [
-            crop_sequence(self.sequences[i], self.weights[i], length)
-            for i, length in zip(indices, lengths)
+            crop_sequence(self.sequences[index], self.weights[index], length)
+            for (index, length) in sampler_out
         ]
 
 
