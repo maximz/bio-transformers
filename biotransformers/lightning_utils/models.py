@@ -64,20 +64,36 @@ class LightningModule(pl.LightningModule):
 
         return [optimizer], [lr_scheduler]
 
-    def cross_entropy_loss(self, logits, targets):
-        return F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            targets.reshape(-1),
-            reduction="sum",
+    def cross_entropy_loss(self, logits: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        # logits are of shape (len_sequences, len_tokens_per_sequence, len_vocab).
+        # flatten to (len_sequences * len_tokens_per_sequence, len_vocab):
+        logits_flatten = logits.reshape(-1, logits.size(-1))
+
+        # reshape(-1) flattens out the 2D tensor into a 1D tensor
+        targets_flatten = targets.reshape(-1)
+        weights_flatten = weights.reshape(-1)
+
+        cross_entropy_per_token = F.cross_entropy(
+            logits_flatten,
+            targets_flatten,
+            # set reduction="none" to get loss for each instance,
+            # then do weighted sum ourselves
+            # reduction="sum",
+            reduction="none",
             ignore_index=self.alphabet.padding_idx,
         )
+        # Return weighted sum
+        return (cross_entropy_per_token * weights_flatten).sum()
 
     def training_step(self, train_batch, batch_idx):
-        tokens, target = train_batch
+        # train_batch is a set of 2D tensors of shape #sequences x #tokens
+        # in each tensor: each row is a sequence; each entry in the row corresponds to a particular token.
+        tokens, target, weights = train_batch
         logits = self.forward(tokens)
-        loss = self.cross_entropy_loss(logits, target)
+        loss = self.cross_entropy_loss(logits, target, weights)
 
         masked_preds, masked_targets = self.get_tensor_accuracy(logits, target)
+        # TODO: incorporate weights (not supported natively by torchmetrics.Accuracy)
         self.train_acc(masked_preds, masked_targets)
 
         masked_tokens = target.ne(self.alphabet.padding_idx)
@@ -101,11 +117,14 @@ class LightningModule(pl.LightningModule):
             batch: batch input.
             batch_idx: index of the batch.
         """
-        tokens, target = val_batch
-        logits = self.forward(tokens)
-        loss = self.cross_entropy_loss(logits, target)
+        # val_batch is a set of 2D tensors of shape #sequences x #tokens
+        # in each tensor: each row is a sequence; each entry in the row corresponds to a particular token.
+        tokens, target, weights = val_batch
+        logits = self.forward(tokens) # shape: #sequences x #tokens x len_vocab
+        loss = self.cross_entropy_loss(logits, target, weights)
 
         masked_preds, masked_targets = self.get_tensor_accuracy(logits, target)
+        # TODO: incorporate weights (not supported natively by torchmetrics.Accuracy)
         self.val_acc(masked_preds, masked_targets)
 
         masked_tokens = target.ne(self.alphabet.padding_idx)

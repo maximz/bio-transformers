@@ -127,17 +127,17 @@ def mask_seq(
 
 
 def collate_fn(
-    samples: Sequence[Tuple[str, str]],
+    samples: List[List[Tuple[str, np.ndarray]]],
     tokenizer: BatchConverter,
     alphabet: AlphabetDataLoader,
     masking_ratio: float,
     masking_prob: float,
     random_token_prob: float,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Collate function to mask tokens.
 
     Args:
-        samples: a sequences of (label, seq).
+        samples: a list with one item: a list of (sequence string, array of weights per token) tuples.
         tokenizer: facebook tokenizer, that accepts sequences of (label, seq_str)
             and outputs (labels, seq_strs, tokens).
         alphabet: facebook alphabet.
@@ -151,14 +151,38 @@ def collate_fn(
         mask_indices: indices of masked tokens
     """
     random_token_indices = [alphabet.tok_to_idx(aa) for aa in alphabet.standard_toks]
-    seqs, tokens = tokenizer(
-        samples[0]
-    )  # take samples[0] because batch_sampler return list of list
+
+    # Unpack: batch_sampler output is wrapped in a list (single item)
+    # Inside is a tuple for every sequence:
+    # First entry: entire string of the sequence;
+    # Second entry: numpy float array of weights for every character/position in the sequence.
+    list_of_tuples = samples[0]
+    sequences, weight_arrays = zip(*list_of_tuples)
+
+    # Vertically stack the weight vectors for all sequences.
+    # Note: sequences are not guaranteed to be of equal length, and thus weight arrays are not necessarily equal size.
+    # When the tokenizer is run below, the tokens_matrix will have right-padding with alphabet.padding_idx.
+    # Do the same here: right-pad with 1s to make all weight arrays equal size.
+    maximum_weight_length = max(arr.shape[0] for arr in weight_arrays)
+    weight_matrix = np.array([np.pad(arr, (0, maximum_weight_length - arr.shape[0]), mode='constant', constant_values=1.) for arr in weight_arrays])
+
+    # Add weight=1 at start and/or end,
+    # based on alphabet.prepend_bos and alphabet.append_eos,
+    # which tell us whether the tokenizer adds tokens at the beginning or end of the sequence.
+    ones_vector = np.ones((weight_matrix.shape[0], 1))
+    to_hstack = (ones_vector if alphabet.prepend_bos else None, weight_matrix, ones_vector if alphabet.append_eos else None)
+    weight_matrix = np.hstack([mat for mat in to_hstack if mat is not None])
+
+    # Run tokenizer,
+    # which returns the original sequences and a vector of token IDs for each sequence (vertically concatenated into a 2D tensor).
+    seqs, tokens_matrix = tokenizer(sequences)
+
+    # Construct lists of tokens, targets, and weights
     tokens_list, targets_list = [], []
-    for i, seq in enumerate(seqs):
+    for seq, tokens_vector in zip(seqs, tokens_matrix):
         tokens_i, targets_i = mask_seq(
             seq=seq,
-            tokens=tokens[i, :],
+            tokens=tokens_vector, # same as tokens[i, :] if we wrap in enumerate()
             prepend_bos=alphabet.prepend_bos,
             mask_idx=alphabet.mask_idx,
             pad_idx=alphabet.padding_idx,
@@ -170,20 +194,25 @@ def collate_fn(
         tokens_list.append(tokens_i)
         targets_list.append(targets_i)
 
+    # Stack into 2D tensors,
+    # where each row is the vector for a particular sequence,
+    # i.e. the shape is #sequences x #tokens
     tokens = torch.stack(tokens_list)
     targets = torch.stack(targets_list)
+    weights = torch.tensor(weight_matrix)
 
-    return tokens, targets
+    return tokens, targets, weights
 
 
-def crop_sequence(sequence: str, crop_length: int) -> str:
+def crop_sequence(sequence: str, weights: np.ndarray, crop_length: int) -> Tuple[str, np.ndarray]:
     """If the length of the sequence is superior to crop_length, crop randomly
     the sequence to get the proper length."""
     if len(sequence) <= crop_length:
-        return sequence
+        return sequence, weights
     else:
         start_idx = random.randint(0, len(sequence) - crop_length)
-        return sequence[start_idx : (start_idx + crop_length)]
+        end_idx = start_idx + crop_length
+        return sequence[start_idx:end_idx], weights[start_idx:end_idx]
 
 
 def get_batch_indices(
@@ -404,27 +433,37 @@ class BatchWithConstantNumberTokensDataset(Dataset):
     Dataset class to work in pair with the BatchWithConstantNumberTokensSampler.
     """
 
-    def __init__(self, sequences: List[str]):
+    def __init__(self, sequences: List[str], weights: List[np.ndarray]):
         super().__init__()
         self.sequences = sequences
+        self.weights = weights
+        if len(self.sequences) != len(self.weights):
+            raise ValueError(
+                f"Sequences and weights must have the same length. Got {len(self.sequences)} sequences and {len(self.weights)} weights."
+            )
+        if any(len(s) != len(w) for s, w in zip(self.sequences, self.weights)):
+            raise ValueError(f"Sequence length must always match weight length.")
 
     def __len__(self):
         return len(self.sequences)
 
-    def __getitem__(self, sampler_out) -> List[str]:
-        indices, lengths = zip(*sampler_out)
-        sequences = [
-            crop_sequence(self.sequences[i], length)
-            for i, length in zip(indices, lengths)
+    def __getitem__(self, sampler_out) -> List[Tuple[str, np.ndarray]]:
+        # Get items.
+        # Crop sequences to desired lengths, and apply the edits to the weight arrays too.
+        # sampler_out is a List of tuples of (index, length)
+        return [
+            crop_sequence(self.sequences[index], self.weights[index], length)
+            for (index, length) in sampler_out
         ]
-        return sequences
 
 
 class BatchWithConstantNumberTokensDataModule(LightningDataModule):
     def __init__(
         self,
         train_sequences: List[str],
+        train_sequence_position_weights: List[np.ndarray],
         validation_sequences: List[str],
+        validation_sequence_position_weights: List[np.ndarray],
         alphabet: AlphabetDataLoader,
         masking_ratio: float,
         masking_prob: float,
@@ -435,7 +474,9 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
     ):
         LightningDataModule.__init__(self)
         self._train_sequences = train_sequences
+        self._train_sequence_position_weights = train_sequence_position_weights
         self._validation_sequences = validation_sequences
+        self._validation_sequence_position_weights = validation_sequence_position_weights
         self._alphabet = alphabet
         self._masking_ratio = masking_ratio
         self._masking_prob = masking_prob
@@ -444,8 +485,8 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
         self._toks_per_batch = toks_per_batch
         self._crop_sizes = crop_sizes
 
-    def _get_dataloader(self, sequences: List[str]) -> DataLoader:
-        dataset = BatchWithConstantNumberTokensDataset(sequences)
+    def _get_dataloader(self, sequences: List[str], weights: List[np.ndarray]) -> DataLoader:
+        dataset = BatchWithConstantNumberTokensDataset(sequences, weights)
         batch_sampler = DistributedBatchWithConstantNumberTokensSampler(
             sequence_strs=sequences,
             toks_per_batch=self._toks_per_batch,
@@ -471,7 +512,7 @@ class BatchWithConstantNumberTokensDataModule(LightningDataModule):
         return loader
 
     def train_dataloader(self):
-        return self._get_dataloader(self._train_sequences)
+        return self._get_dataloader(self._train_sequences, self._train_sequence_position_weights)
 
     def val_dataloader(self):
-        return self._get_dataloader(self._validation_sequences)
+        return self._get_dataloader(self._validation_sequences, self._validation_sequence_position_weights)

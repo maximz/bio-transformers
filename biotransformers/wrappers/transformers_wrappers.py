@@ -22,6 +22,7 @@ from biotransformers.wrappers.language_model import LanguageModel
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+from torch.nn import functional as F
 
 from ..lightning_utils.data import BatchWithConstantNumberTokensDataModule
 from ..lightning_utils.models import LightningModule
@@ -813,6 +814,71 @@ class TransformersWrapper:
         self.delete_ray_workers()
         return accuracy
 
+    def compute_cross_entropy_loss(
+        self,
+        sequences: Union[List[str], str],
+        batch_size: int = 1,
+        pass_mode: str = "forward",
+        silent: bool = False,
+        n_seqs_msa: int = 6,
+    ) -> float:
+        """Compute model cross entropy loss from the input sequences.
+
+        Follows the compute_accuracy implementation above,
+        and the cross-entropy loss implementation in the training loop at `lightning_utils/models.py`.
+
+        When working with MSA, the loss is computed over all the tokens of the msa' sequences.
+        Args:
+            sequences (Union[List[str],str]): List of sequences, path of fasta file or path to a folder with msa to a3m format.
+            batch_size ([type], optional): [description]. Defaults to 1.
+            pass_mode ([type], optional): [description]. Defaults to "forward".
+            silent : whereas to display or not progress bar
+            n_seqs_msa: number of sequence to consider in an msa file.
+        Returns:
+            float: model's average cross entropy loss over the given sequences
+        """
+        sequences, lengths = init_model_sequences(
+            sequences=sequences,
+            model_dir=self._model_dir,
+            model_is_msa=self._language_model.is_msa,
+            n_seqs_msa=n_seqs_msa,
+            vocab_size=self._language_model.vocab_size,
+            pass_mode=pass_mode,
+        )
+        self.init_ray_workers()
+
+        # Perform inference in model to compute the logits
+        inputs = self._language_model.process_sequences_and_tokens(sequences)
+        logits = self._compute_logits(inputs, batch_size, pass_mode, silent=silent)
+        # Get length of sequence
+        labels = torch.unsqueeze(inputs["input_ids"], dim=-1)
+
+        # Remove padded logits
+        # (Slightly optimized compute_accuracy's version to remove unnecessary tensor -> numpy -> tensor back-and-forth
+        logits = [logit.transpose(0, 1)[:, :length].transpose(0, 1) for logit, length in zip(logits, lengths)]
+        labels = [label.transpose(0, 1)[:, :length].transpose(0, 1) for label, length in zip(labels, lengths)]
+
+        logits = torch.cat(logits, dim=0)
+        labels = torch.cat(labels, dim=0)
+
+        # logits are of shape (len_sequences, len_tokens_per_sequence, len_vocab).
+        # flatten to (len_sequences * len_tokens_per_sequence, len_vocab):
+        logits_flatten = logits.reshape(-1, logits.size(-1))
+
+        # reshape(-1) flattens out the 2D tensor into a 1D tensor
+        labels_flatten = labels.reshape(-1)
+
+        alphabet = self._language_model.get_alphabet_dataloader()
+        average_cross_entropy = F.cross_entropy(
+            logits_flatten,
+            labels_flatten,
+            reduction="mean",
+            ignore_index=alphabet.padding_idx,
+        ).item()
+
+        self.delete_ray_workers()
+        return average_cross_entropy
+
     def load_model(self, checkpoint_path: str):
         """Load model from a lightning checkpoint.
 
@@ -842,7 +908,9 @@ class TransformersWrapper:
     def finetune(
         self,
         train_sequences: Union[List[str], str],
+        train_sequence_position_weights: List[np.ndarray],
         validation_sequences: Union[List[str], str],
+        validation_sequence_position_weights: List[np.ndarray],
         num_data_workers: int = 4,
         lr: float = 1.0e-5,
         warmup_updates: int = 1024,
@@ -943,7 +1011,9 @@ class TransformersWrapper:
 
         lightning_data_module = BatchWithConstantNumberTokensDataModule(
             train_sequences=train_sequences,
+            train_sequence_position_weights=train_sequence_position_weights,
             validation_sequences=validation_sequences,
+            validation_sequence_position_weights=validation_sequence_position_weights,
             alphabet=alphabet,
             masking_ratio=masking_ratio,
             masking_prob=masking_prob,
