@@ -1,15 +1,76 @@
 import math
 import os
+import platform
+import sys
 from pathlib import Path
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 from Bio import SeqIO
 from biotransformers.utils.constant import BACKEND_LIST
 from biotransformers.utils.logger import logger
 from biotransformers.utils.msa_utils import get_msa_lengths, get_msa_list, read_msa
 
 log = logger("utils")
+
+
+def _is_mps_available() -> bool:
+    """Check if MPS (Metal Performance Shaders) is available on Mac Silicon.
+
+    Returns:
+        bool: True if MPS is available and we're on Mac Silicon, False otherwise
+    """
+    # Check if we're on Mac Silicon
+    is_mac_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+
+    # Check if PyTorch has MPS support
+    has_mps_backend = hasattr(torch.backends, "mps")
+
+    # Check if MPS is actually available
+    if is_mac_silicon and has_mps_backend:
+        return torch.backends.mps.is_available()
+
+    return False
+
+
+def _get_device_type(num_gpus: int) -> str:
+    """Determine the device type to use based on availability and platform.
+
+    Priority on Mac Silicon: MPS > CUDA > error
+    Priority elsewhere: CUDA > error
+
+    Args:
+        num_gpus: Number of GPUs requested (0 means CPU, >=1 means accelerator)
+
+    Returns:
+        str: Device string ("cpu", "cuda", or "mps")
+
+    Raises:
+        AssertionError: If num_gpus >= 1 but no accelerator is available
+    """
+    if num_gpus == 0:
+        return "cpu"
+
+    # num_gpus >= 1, need to find an accelerator
+    is_mac_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+
+    if is_mac_silicon:
+        # On Mac Silicon: prefer MPS over CUDA
+        if _is_mps_available():
+            return "mps"
+        elif torch.cuda.is_available():
+            return "cuda"
+        else:
+            raise AssertionError(
+                "num_gpus >= 1 but no GPU accelerator (MPS or CUDA) is available."
+            )
+    else:
+        # On other platforms: use CUDA
+        if torch.cuda.is_available():
+            return "cuda"
+        else:
+            raise AssertionError("num_gpus >= 1 but CUDA is not available.")
 
 
 def init_model_sequences(

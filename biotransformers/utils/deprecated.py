@@ -29,6 +29,9 @@ def rename_kwargs(func_name, kwargs, aliases):  # noqa
                 if "cuda" in kwargs[alias]:
                     kwargs.pop(alias)
                     kwargs[new] = 1
+                elif "mps" in kwargs[alias]:
+                    kwargs.pop(alias)
+                    kwargs[new] = 1
                 elif "cpu" in kwargs[alias]:
                     kwargs.pop(alias)
                     kwargs[new] = 0

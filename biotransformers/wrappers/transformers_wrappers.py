@@ -17,7 +17,12 @@ from biotransformers.utils.compute_utils import Mutation, get_list_probs, mutati
 from biotransformers.utils.constant import NATURAL_AAS_LIST
 from biotransformers.utils.logger import logger  # noqa
 from biotransformers.utils.tqdm_utils import ProgressBar
-from biotransformers.utils.utils import init_model_sequences, load_fasta
+from biotransformers.utils.utils import (
+    _get_device_type,
+    _is_mps_available,
+    init_model_sequences,
+    load_fasta,
+)
 from biotransformers.wrappers.language_model import LanguageModel
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -52,15 +57,30 @@ class TransformersWrapper:
         Args:
             model_dir: name directory of the pretrained model
             num_gpus: number of gpus to use. If set to 0, it uses the cpu.
+                On Mac Silicon, automatically uses MPS when num_gpus=1.
+                On other platforms, uses CUDA when num_gpus>=1.
+                Multi-GPU (num_gpus>1) is only supported with CUDA.
         """
         self._model_dir = model_dir
         self._num_gpus = num_gpus
         self.language_model_cls = language_model_cls
-        if num_gpus >= 1:
-            assert torch.cuda.is_available(), "Cuda is not available."
+
+        # Validate device availability for multi-GPU
+        if num_gpus > 1:
+            # MPS does not support multi-GPU training
+            if _is_mps_available():
+                raise ValueError(
+                    "MPS does not support multi-GPU training (num_gpus > 1). "
+                    "Please use num_gpus=1 on Mac Silicon, or use a CUDA-enabled system "
+                    "for multi-GPU training."
+                )
+            # For multi-GPU, we need CUDA
+            assert torch.cuda.is_available(), "CUDA is not available."
             assert torch.cuda.device_count() >= num_gpus, "Not enough available GPUs."
+
         if num_gpus <= 1:
-            device = "cpu" if num_gpus == 0 else "cuda"
+            # Get appropriate device (cpu, cuda, or mps)
+            device = _get_device_type(num_gpus)
             self._language_model = language_model_cls(
                 model_dir=model_dir, device=device
             )

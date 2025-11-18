@@ -27,6 +27,9 @@ class BioTransformers(TransformersWrapper):
         Args:
             backend (str, optional): name of the backend displayed with `list_backend()` . Defaults to "esm1_t6_43M_UR50S".
             num_gpus (int, optional): number of gpu to use. Defaults to 0.
+                On Mac Silicon, automatically uses MPS when num_gpus=1.
+                On other platforms, uses CUDA when num_gpus>=1.
+                Multi-GPU (num_gpus>1) is only supported with CUDA.
         """
         pass
 
